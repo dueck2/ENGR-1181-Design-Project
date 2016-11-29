@@ -1,0 +1,111 @@
+%TrainCode V1.0 
+%Opening Statements
+delete(timerfindall);
+clear all;
+close all;
+delete(instrfindall);
+clc;
+format compact;
+ 
+
+
+%-------Initial Operating Conditions-------
+continueRunning = 1; 
+trainPosition = 'unknown';
+blinker = 1;
+blinkSeconds = 0;
+
+% Connect to Arduino board (or simulator)
+a=arduino('COM3');   %arduino_sim() if using simulator, else arduino()
+a.pinMode(15, 'output');
+a.pinMode(14, 'output');
+rrLEDright=14;
+rrLEDleft=15;
+a.servoAttach(1);
+% a.servoStatus;
+a.servoWrite(1,78); %vertical
+
+
+%naming constants for use in subsequent function calls.
+approach =3; departure = 2;        % Arduino port #'s for the gates
+
+
+%----------------------Tuning variables. Experiment for best performance----------------------------------------
+positiveThreshold = 350;               %Adjust this to change the minimum sensor value required to declare a positive result 
+
+%-------Start Train-------
+tzeroTimer=tic;
+a.motorRun(1,'forward');
+a.motorSpeed(1, 255);
+
+%-------Governing Loop-------
+while continueRunning == 1
+    %       interogate sensors
+    approachVal=a.analogRead(approach);
+    departureVal=a.analogRead(departure);
+    
+        %
+        switch trainPosition
+       case 'approach'
+            if toc(approachTimer)>blinkSeconds +.4
+                blinker = ~blinker;
+                blinkSeconds = blinkSeconds +.4;
+            end
+            disp(toc(approachTimer))
+            
+            %start rr crossing lights
+             if toc(approachTimer) < 3.5
+                if blinker == 1
+                a.digitalWrite(rrLEDright,1);
+                a.digitalWrite(rrLEDleft,0); 
+                elseif blinker == 0
+                a.digitalWrite(rrLEDright,0);
+                a.digitalWrite(rrLEDleft,1); 
+                end   
+            else
+                %stop lights
+                a.digitalWrite(rrLEDright,0);
+                a.digitalWrite(rrLEDleft,0); 
+                 blinkSeconds = 0;
+             end
+          
+            
+            %lower crossing guard
+            if toc(approachTimer) < 1
+                a.servoWrite(1,170); %horizontal
+            elseif toc(approachTimer) > 4.1
+                a.servoWrite(1,78); %vertical
+            end
+            
+            %stop at the station
+            if toc(approachTimer) >=5 && toc(approachTimer) < 8
+                a.motorSpeed(1, 0);
+            elseif toc(approachTimer) > 9   %leave station
+                a.motorSpeed(1, 150);
+            end
+            
+            %If train passes through the departure gate...
+            if departureVal > positiveThreshold                
+                trainPosition = 'departure';    %change to departure case
+                fprintf('%s\t%7.4f\n', trainPosition, toc(tzeroTimer));
+                a.motorSpeed(1, 255);  %full steam ahead
+            end 
+            
+        case 'departure'
+            if approachVal > positiveThreshold
+                trainPosition = 'approach';
+                fprintf('%s\t%7.4f\n', trainPosition, toc(tzeroTimer));
+                  a.motorSpeed(1, 150);
+                  approachTimer=tic;
+                 
+            end 
+        case 'unknown'
+            if departureVal > positiveThreshold
+                trainPosition = 'departure';              
+            elseif approachVal > positiveThreshold
+                trainPosition = 'approach';
+                approachTimer=tic;
+                
+            end
+        end  
+end
